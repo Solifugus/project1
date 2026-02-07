@@ -16,12 +16,12 @@ from PySide6.QtWidgets import (
     QTabWidget, QSplitter, QTextEdit, QLabel, QPushButton,
     QMenuBar, QStatusBar, QMessageBox, QFileDialog, QPlainTextEdit,
     QListWidget, QListWidgetItem, QGroupBox, QFormLayout, QScrollArea,
-    QDialog, QLineEdit, QDialogButtonBox, QCompleter
+    QDialog, QLineEdit, QDialogButtonBox, QCompleter, QMenu, QInputDialog
 )
 from PySide6.QtCore import Qt, QTimer, Signal
-from PySide6.QtGui import QAction, QFont, QIcon, QUndoStack, QUndoCommand
+from PySide6.QtGui import QAction, QFont, QIcon, QUndoStack, QUndoCommand, QColor
 
-from workspace_manager import create_workspace_manager
+from workspace_manager_simple import create_workspace_manager
 from doc_element import Kind
 
 
@@ -107,6 +107,575 @@ class GoToIdDialog(QDialog):
         """Pre-populate the dialog with an element ID."""
         self.id_input.setText(element_id)
         self.id_input.selectAll()
+
+
+class NewProjectDialog(QDialog):
+    """
+    Dialog for creating a new project from templates.
+    Creates a new project directory and copies template files.
+    """
+
+    def __init__(self, parent=None, workspace_path=None):
+        """
+        Initialize the New Project dialog.
+
+        Args:
+            parent: Parent widget
+            workspace_path: Path to the workspace directory
+        """
+        super().__init__(parent)
+        self.setWindowTitle("New Project")
+        self.setMinimumWidth(500)
+        self.setModal(True)
+
+        self.workspace_path = Path(workspace_path) if workspace_path else None
+        self.project_name = ""
+
+        # Create layout
+        layout = QVBoxLayout()
+
+        # Instructions
+        info_label = QLabel("Create a new project in the workspace.")
+        info_label.setWordWrap(True)
+        info_label.setStyleSheet("color: #666; margin-bottom: 10px;")
+        layout.addWidget(info_label)
+
+        # Workspace path display
+        if self.workspace_path:
+            workspace_label = QLabel(f"Workspace: {self.workspace_path}")
+            workspace_label.setStyleSheet("font-family: monospace; color: #444; margin-bottom: 10px;")
+            layout.addWidget(workspace_label)
+
+        # Project name input
+        name_layout = QVBoxLayout()
+        name_label = QLabel("Project Name:")
+        name_label.setStyleSheet("font-weight: bold;")
+        name_layout.addWidget(name_label)
+
+        self.name_input = QLineEdit()
+        self.name_input.setPlaceholderText("Enter project name (e.g., 'my-web-app')")
+        self.name_input.textChanged.connect(self._on_name_changed)
+        name_layout.addWidget(self.name_input)
+
+        # Name validation info
+        self.name_help = QLabel("• Use lowercase letters, numbers, and hyphens only\n• Name will be used for directory and file names")
+        self.name_help.setStyleSheet("color: #666; font-size: 11px; margin-top: 5px;")
+        name_layout.addWidget(self.name_help)
+
+        layout.addLayout(name_layout)
+
+        # Templates info
+        templates_label = QLabel("Templates:")
+        templates_label.setStyleSheet("font-weight: bold; margin-top: 15px;")
+        layout.addWidget(templates_label)
+
+        templates_info = QLabel("✓ software-design.md - Project architecture and components\n"
+                               "✓ development-plan.md - Task breakdown and planning\n"
+                               "✓ test-plan.md - Testing strategy and specifications")
+        templates_info.setStyleSheet("color: #666; margin-left: 10px; margin-bottom: 15px;")
+        layout.addWidget(templates_info)
+
+        # Status label
+        self.status_label = QLabel("Ready to create project")
+        self.status_label.setStyleSheet("color: gray; font-style: italic; margin-top: 10px;")
+        layout.addWidget(self.status_label)
+
+        # Button box
+        self.buttons = QDialogButtonBox()
+        self.create_button = self.buttons.addButton("Create Project", QDialogButtonBox.AcceptRole)
+        self.cancel_button = self.buttons.addButton("Cancel", QDialogButtonBox.RejectRole)
+
+        self.create_button.setEnabled(False)
+
+        # Connect button signals
+        self.create_button.clicked.connect(self._create_project)
+        self.cancel_button.clicked.connect(self.reject)
+
+        layout.addWidget(self.buttons)
+        self.setLayout(layout)
+
+        # Focus on name input
+        self.name_input.setFocus()
+
+    def _on_name_changed(self, text):
+        """Handle project name changes with validation."""
+        self.project_name = text.strip()
+        is_valid = self._validate_project_name(self.project_name)
+
+        self.create_button.setEnabled(is_valid and bool(self.project_name))
+
+        if not self.project_name:
+            self.status_label.setText("Enter a project name")
+            self.status_label.setStyleSheet("color: gray; font-style: italic;")
+        elif is_valid:
+            target_dir = self.workspace_path / self.project_name if self.workspace_path else None
+            if target_dir and target_dir.exists():
+                self.status_label.setText("⚠️ Directory already exists")
+                self.status_label.setStyleSheet("color: orange; font-weight: bold;")
+                self.create_button.setEnabled(False)
+            else:
+                self.status_label.setText("✓ Ready to create project")
+                self.status_label.setStyleSheet("color: green; font-weight: bold;")
+        else:
+            self.status_label.setText("❌ Invalid name - use lowercase letters, numbers, hyphens only")
+            self.status_label.setStyleSheet("color: red; font-weight: bold;")
+
+    def _validate_project_name(self, name):
+        """Validate project name format."""
+        if not name:
+            return False
+
+        # Check if name contains only valid characters
+        import re
+        if not re.match(r'^[a-z0-9][a-z0-9-]*[a-z0-9]$|^[a-z0-9]$', name):
+            return False
+
+        # Check length
+        if len(name) < 1 or len(name) > 50:
+            return False
+
+        return True
+
+    def _create_project(self):
+        """Create the new project from templates."""
+        if not self.workspace_path or not self.project_name:
+            return
+
+        try:
+            self.status_label.setText("Creating project...")
+            self.status_label.setStyleSheet("color: blue; font-weight: bold;")
+            self.create_button.setEnabled(False)
+
+            # Create project directory
+            project_dir = self.workspace_path / self.project_name
+            project_dir.mkdir(parents=True, exist_ok=False)
+
+            # Copy templates
+            templates_dir = self.workspace_path / "templates"
+            if not templates_dir.exists():
+                raise FileNotFoundError("Templates directory not found")
+
+            template_files = ["software-design.md", "development-plan.md", "test-plan.md"]
+            copied_files = []
+
+            for template_file in template_files:
+                template_path = templates_dir / template_file
+                if template_path.exists():
+                    target_path = project_dir / template_file
+
+                    # Read template and customize with project name
+                    template_content = template_path.read_text(encoding='utf-8')
+                    customized_content = self._customize_template(template_content, self.project_name)
+
+                    # Write customized content
+                    target_path.write_text(customized_content, encoding='utf-8')
+                    copied_files.append(template_file)
+
+            if copied_files:
+                self.status_label.setText(f"✅ Project created with {len(copied_files)} files")
+                self.status_label.setStyleSheet("color: green; font-weight: bold;")
+
+                # Close dialog after short delay
+                QTimer.singleShot(1500, self.accept)
+            else:
+                self.status_label.setText("⚠️ No template files found")
+                self.status_label.setStyleSheet("color: orange; font-weight: bold;")
+                self.create_button.setEnabled(True)
+
+        except FileExistsError:
+            self.status_label.setText("❌ Project directory already exists")
+            self.status_label.setStyleSheet("color: red; font-weight: bold;")
+            self.create_button.setEnabled(True)
+        except Exception as e:
+            self.status_label.setText(f"❌ Error creating project: {e}")
+            self.status_label.setStyleSheet("color: red; font-weight: bold;")
+            self.create_button.setEnabled(True)
+
+    def _customize_template(self, content, project_name):
+        """Customize template content with project name."""
+        # Replace placeholder project names with actual project name
+        customized = content.replace("Project1", project_name.title().replace('-', ''))
+        customized = customized.replace("project1", project_name)
+
+        # Update titles and headings
+        lines = customized.splitlines()
+        for i, line in enumerate(lines):
+            if line.strip().startswith("# ") and ("Project1" in line or "project1" in line):
+                # Customize main headings
+                if "Development Plan" in line:
+                    lines[i] = f"# Development Plan: {project_name}"
+                elif "Software Design" in line:
+                    lines[i] = f"# Software Design: {project_name}"
+                elif "Test Plan" in line:
+                    lines[i] = f"# Test Plan: {project_name}"
+            elif line.strip().startswith("- Project Name:"):
+                lines[i] = f"- Project Name: {project_name}"
+
+        return '\n'.join(lines)
+
+    def get_project_name(self):
+        """Get the created project name."""
+        return self.project_name
+
+
+class TaskRunnerDialog(QDialog):
+    """
+    Dialog for running task commands and tracking execution.
+    Provides interface to execute build commands and see results.
+    """
+
+    # Signal emitted when a task status changes
+    task_status_changed = Signal(str, str)  # task_id, new_status
+
+    def __init__(self, parent=None, task_element=None, workspace_path=None):
+        """
+        Initialize the Task Runner dialog.
+
+        Args:
+            parent: Parent widget
+            task_element: DocElement representing the task
+            workspace_path: Path to workspace root
+        """
+        super().__init__(parent)
+        self.setWindowTitle("Task Runner")
+        self.setMinimumSize(700, 500)
+        self.setModal(True)
+
+        self.task_element = task_element
+        self.workspace_path = Path(workspace_path) if workspace_path else None
+        self.process = None  # For running commands
+
+        # Create layout
+        layout = QVBoxLayout()
+
+        # Task info section
+        task_info_group = self._create_task_info_section()
+        layout.addWidget(task_info_group)
+
+        # Command configuration section
+        command_group = self._create_command_section()
+        layout.addWidget(command_group)
+
+        # Output section
+        output_group = self._create_output_section()
+        layout.addWidget(output_group)
+
+        # Status and buttons
+        status_layout = self._create_status_section()
+        layout.addLayout(status_layout)
+
+        self.setLayout(layout)
+
+        # Load initial command from task if available
+        self._load_task_commands()
+
+    def _create_task_info_section(self):
+        """Create task information display section."""
+        group = QGroupBox("Task Information")
+        layout = QVBoxLayout()
+
+        if self.task_element:
+            # Task ID and title
+            id_layout = QHBoxLayout()
+            id_layout.addWidget(QLabel("ID:"))
+            id_label = QLabel(self.task_element.id)
+            id_label.setStyleSheet("font-weight: bold; color: #0066cc;")
+            id_layout.addWidget(id_label)
+            id_layout.addStretch()
+
+            # Current status
+            status_layout = QHBoxLayout()
+            status_layout.addWidget(QLabel("Status:"))
+            self.status_indicator = QLabel(self.task_element.status.value.replace('_', ' ').title())
+            self._update_status_indicator()
+            status_layout.addWidget(self.status_indicator)
+            status_layout.addStretch()
+
+            layout.addLayout(id_layout)
+            layout.addLayout(status_layout)
+
+            # Title
+            title_label = QLabel(f"Title: {self.task_element.title}")
+            title_label.setWordWrap(True)
+            title_label.setStyleSheet("font-weight: bold; margin: 5px 0;")
+            layout.addWidget(title_label)
+
+            # Description preview
+            if self.task_element.body_markdown:
+                preview = self.task_element.body_markdown[:200] + "..." if len(self.task_element.body_markdown) > 200 else self.task_element.body_markdown
+                desc_label = QLabel(f"Description: {preview}")
+                desc_label.setWordWrap(True)
+                desc_label.setStyleSheet("color: #666;")
+                layout.addWidget(desc_label)
+        else:
+            layout.addWidget(QLabel("No task selected"))
+
+        group.setLayout(layout)
+        return group
+
+    def _create_command_section(self):
+        """Create command configuration section."""
+        group = QGroupBox("Command Configuration")
+        layout = QVBoxLayout()
+
+        # Working directory
+        dir_layout = QHBoxLayout()
+        dir_layout.addWidget(QLabel("Working Directory:"))
+        self.working_dir_input = QLineEdit()
+        if self.workspace_path:
+            self.working_dir_input.setText(str(self.workspace_path))
+        dir_layout.addWidget(self.working_dir_input)
+
+        browse_button = QPushButton("Browse...")
+        browse_button.clicked.connect(self._browse_working_dir)
+        dir_layout.addWidget(browse_button)
+        layout.addLayout(dir_layout)
+
+        # Command input
+        layout.addWidget(QLabel("Command:"))
+        self.command_input = QLineEdit()
+        self.command_input.setPlaceholderText("Enter command to execute (e.g., 'npm run build', 'cargo test', 'python setup.py')")
+        layout.addWidget(self.command_input)
+
+        # Quick command buttons
+        quick_layout = QHBoxLayout()
+        quick_layout.addWidget(QLabel("Quick Commands:"))
+
+        quick_commands = [
+            ("Build", "npm run build"),
+            ("Test", "npm test"),
+            ("Install", "npm install"),
+            ("Python Test", "python -m pytest"),
+            ("Custom", "")
+        ]
+
+        for name, cmd in quick_commands:
+            btn = QPushButton(name)
+            btn.clicked.connect(lambda checked, command=cmd: self._set_quick_command(command))
+            quick_layout.addWidget(btn)
+
+        quick_layout.addStretch()
+        layout.addLayout(quick_layout)
+
+        group.setLayout(layout)
+        return group
+
+    def _create_output_section(self):
+        """Create command output section."""
+        group = QGroupBox("Command Output")
+        layout = QVBoxLayout()
+
+        self.output_text = QPlainTextEdit()
+        self.output_text.setReadOnly(True)
+        self.output_text.setFont(QFont("Consolas, Monaco, 'Courier New', monospace", 9))
+        self.output_text.setStyleSheet("background-color: #1e1e1e; color: #ffffff; border: 1px solid #ccc;")
+        self.output_text.setPlainText("Ready to execute commands...\n")
+
+        layout.addWidget(self.output_text)
+        group.setLayout(layout)
+        return group
+
+    def _create_status_section(self):
+        """Create status and button section."""
+        layout = QHBoxLayout()
+
+        # Status label
+        self.execution_status = QLabel("Ready")
+        self.execution_status.setStyleSheet("color: gray; font-style: italic;")
+        layout.addWidget(self.execution_status)
+
+        layout.addStretch()
+
+        # Task status buttons
+        self.start_task_btn = QPushButton("Mark In Progress")
+        self.start_task_btn.clicked.connect(self._mark_task_in_progress)
+
+        self.complete_task_btn = QPushButton("Mark Completed")
+        self.complete_task_btn.clicked.connect(self._mark_task_completed)
+        self.complete_task_btn.setEnabled(False)
+
+        # Command execution buttons
+        self.run_button = QPushButton("Run Command")
+        self.run_button.clicked.connect(self._run_command)
+
+        self.stop_button = QPushButton("Stop")
+        self.stop_button.clicked.connect(self._stop_command)
+        self.stop_button.setEnabled(False)
+
+        self.close_button = QPushButton("Close")
+        self.close_button.clicked.connect(self.accept)
+
+        layout.addWidget(self.start_task_btn)
+        layout.addWidget(self.complete_task_btn)
+        layout.addWidget(self.run_button)
+        layout.addWidget(self.stop_button)
+        layout.addWidget(self.close_button)
+
+        return layout
+
+    def _update_status_indicator(self):
+        """Update the status indicator appearance."""
+        if not self.task_element:
+            return
+
+        status = self.task_element.status.value
+        color_map = {
+            'pending': '#ffa500',      # Orange
+            'in_progress': '#007acc',  # Blue
+            'completed': '#28a745'     # Green
+        }
+
+        color = color_map.get(status, '#666')
+        self.status_indicator.setStyleSheet(f"color: {color}; font-weight: bold;")
+
+        # Update button states
+        if hasattr(self, 'start_task_btn'):
+            self.start_task_btn.setEnabled(status == 'pending')
+            self.complete_task_btn.setEnabled(status == 'in_progress')
+
+    def _load_task_commands(self):
+        """Extract commands from task description if available."""
+        if not self.task_element or not self.task_element.body_markdown:
+            return
+
+        # Look for common command patterns in task description
+        body = self.task_element.body_markdown.lower()
+
+        if 'npm' in body or 'node' in body or 'javascript' in body:
+            self.command_input.setText("npm run build")
+        elif 'python' in body or 'pytest' in body:
+            self.command_input.setText("python -m pytest")
+        elif 'rust' in body or 'cargo' in body:
+            self.command_input.setText("cargo build")
+        elif 'go' in body:
+            self.command_input.setText("go build")
+        elif 'java' in body or 'maven' in body:
+            self.command_input.setText("mvn compile")
+
+    def _browse_working_dir(self):
+        """Browse for working directory."""
+        directory = QFileDialog.getExistingDirectory(self, "Select Working Directory")
+        if directory:
+            self.working_dir_input.setText(directory)
+
+    def _set_quick_command(self, command):
+        """Set a quick command."""
+        if command:
+            self.command_input.setText(command)
+        self.command_input.setFocus()
+
+    def _mark_task_in_progress(self):
+        """Mark task as in progress."""
+        if self.task_element:
+            from doc_element import Status
+            self.task_element.status = Status.IN_PROGRESS
+            self._update_status_indicator()
+            self.task_status_changed.emit(self.task_element.id, "in_progress")
+            self.output_text.appendPlainText(f"[TASK] Marked {self.task_element.id} as IN PROGRESS\n")
+
+    def _mark_task_completed(self):
+        """Mark task as completed."""
+        if self.task_element:
+            from doc_element import Status
+            self.task_element.status = Status.COMPLETED
+            self._update_status_indicator()
+            self.task_status_changed.emit(self.task_element.id, "completed")
+            self.output_text.appendPlainText(f"[TASK] Marked {self.task_element.id} as COMPLETED\n")
+
+    def _run_command(self):
+        """Run the specified command."""
+        command = self.command_input.text().strip()
+        working_dir = self.working_dir_input.text().strip()
+
+        if not command:
+            self.output_text.appendPlainText("[ERROR] No command specified\n")
+            return
+
+        if not working_dir or not Path(working_dir).exists():
+            self.output_text.appendPlainText(f"[ERROR] Working directory does not exist: {working_dir}\n")
+            return
+
+        try:
+            import subprocess
+            import threading
+
+            self.execution_status.setText("Running...")
+            self.execution_status.setStyleSheet("color: blue; font-weight: bold;")
+            self.run_button.setEnabled(False)
+            self.stop_button.setEnabled(True)
+
+            self.output_text.appendPlainText(f"[CMD] {command}\n")
+            self.output_text.appendPlainText(f"[DIR] {working_dir}\n")
+            self.output_text.appendPlainText("=" * 50 + "\n")
+
+            # Run command in thread to avoid blocking UI
+            def run_in_thread():
+                try:
+                    # Split command for subprocess
+                    cmd_parts = command.split()
+
+                    self.process = subprocess.Popen(
+                        cmd_parts,
+                        cwd=working_dir,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.STDOUT,
+                        text=True,
+                        bufsize=1,
+                        universal_newlines=True
+                    )
+
+                    # Read output line by line
+                    for line in self.process.stdout:
+                        self.output_text.appendPlainText(line.rstrip())
+
+                    # Wait for completion
+                    return_code = self.process.wait()
+
+                    # Update UI on main thread
+                    if return_code == 0:
+                        self.execution_status.setText("✅ Completed successfully")
+                        self.execution_status.setStyleSheet("color: green; font-weight: bold;")
+                        self.output_text.appendPlainText(f"\n[SUCCESS] Command completed with exit code {return_code}\n")
+                    else:
+                        self.execution_status.setText("❌ Command failed")
+                        self.execution_status.setStyleSheet("color: red; font-weight: bold;")
+                        self.output_text.appendPlainText(f"\n[ERROR] Command failed with exit code {return_code}\n")
+
+                except Exception as e:
+                    self.execution_status.setText("❌ Execution error")
+                    self.execution_status.setStyleSheet("color: red; font-weight: bold;")
+                    self.output_text.appendPlainText(f"\n[ERROR] {e}\n")
+
+                finally:
+                    # Re-enable buttons
+                    self.run_button.setEnabled(True)
+                    self.stop_button.setEnabled(False)
+                    self.process = None
+
+            # Start command in background thread
+            thread = threading.Thread(target=run_in_thread, daemon=True)
+            thread.start()
+
+        except Exception as e:
+            self.output_text.appendPlainText(f"[ERROR] Failed to start command: {e}\n")
+            self.execution_status.setText("❌ Failed to start")
+            self.execution_status.setStyleSheet("color: red; font-weight: bold;")
+            self.run_button.setEnabled(True)
+            self.stop_button.setEnabled(False)
+
+    def _stop_command(self):
+        """Stop the running command."""
+        if self.process:
+            try:
+                self.process.terminate()
+                self.output_text.appendPlainText("\n[STOP] Command terminated by user\n")
+                self.execution_status.setText("⏹️ Stopped")
+                self.execution_status.setStyleSheet("color: orange; font-weight: bold;")
+            except Exception as e:
+                self.output_text.appendPlainText(f"\n[ERROR] Failed to stop command: {e}\n")
+
+        self.run_button.setEnabled(True)
+        self.stop_button.setEnabled(False)
 
 
 class SettingsDialog(QDialog):
@@ -321,6 +890,7 @@ class NavigationPane(QWidget):
 
     # Signals
     element_selected = Signal(str)  # Emitted when an element is selected
+    run_task_requested = Signal(str)  # Emitted when user wants to run a task
 
     def __init__(self, parent=None):
         """Initialize the navigation pane."""
@@ -415,6 +985,9 @@ class NavigationPane(QWidget):
         """Connect list widget signals to handlers."""
         self.design_list.itemClicked.connect(self._on_design_element_selected)
         self.code_list.itemClicked.connect(self._on_code_element_selected)
+        self.code_list.itemDoubleClicked.connect(self._on_code_element_double_clicked)
+        self.code_list.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.code_list.customContextMenuRequested.connect(self._on_code_context_menu)
         self.test_list.itemClicked.connect(self._on_test_element_selected)
 
     def _on_design_element_selected(self, item: QListWidgetItem):
@@ -437,6 +1010,61 @@ class NavigationPane(QWidget):
         if element_id:
             self.logger.info(f"Test element selected: {element_id}")
             self.element_selected.emit(element_id)
+
+    def _on_code_element_double_clicked(self, item: QListWidgetItem):
+        """Handle double-click on code element to run task."""
+        element_id = item.data(Qt.UserRole)
+        if element_id:
+            self.logger.info(f"Run task requested: {element_id}")
+            self.run_task_requested.emit(element_id)
+
+    def _on_code_context_menu(self, position):
+        """Show context menu for code elements."""
+        item = self.code_list.itemAt(position)
+        if not item:
+            return
+
+        element_id = item.data(Qt.UserRole)
+        if not element_id:
+            return
+
+        # Create context menu
+        menu = QMenu(self)
+
+        # Run Task action
+        run_action = QAction("🚀 Run Task", self)
+        run_action.setStatusTip(f"Run task {element_id}")
+        run_action.triggered.connect(lambda: self.run_task_requested.emit(element_id))
+        menu.addAction(run_action)
+
+        menu.addSeparator()
+
+        # View Task action
+        view_action = QAction("👁️ View Task", self)
+        view_action.setStatusTip(f"View task {element_id}")
+        view_action.triggered.connect(lambda: self.element_selected.emit(element_id))
+        menu.addAction(view_action)
+
+        # Show menu
+        menu.exec(self.code_list.mapToGlobal(position))
+
+    def _get_status_icon(self, status: str) -> str:
+        """Get status icon for task status."""
+        status_icons = {
+            'pending': '⏳',      # Hourglass
+            'in_progress': '🔄',   # Blue circle with arrow
+            'completed': '✅'      # Green checkmark
+        }
+        return status_icons.get(status, '❓')
+
+    def _get_status_color(self, status: str) -> str:
+        """Get color for task status."""
+        status_colors = {
+            'pending': '#ffa500',      # Orange
+            'in_progress': '#007acc',  # Blue
+            'completed': '#28a745'     # Green
+        }
+        return status_colors.get(status, '#666666')
 
     def _load_placeholder_content(self):
         """Load placeholder content when no workspace is available."""
@@ -564,10 +1192,20 @@ class NavigationPane(QWidget):
             task_elements.sort(key=lambda e: e.id)
 
             for element in task_elements:
-                status_indicator = self._get_task_status_indicator(element.id)
-                item_text = f"{element.id} - {element.title} {status_indicator}"
+                # Add status indicator and color coding for tasks
+                status_icon = self._get_status_icon(element.status.value)
+                item_text = f"{status_icon} {element.id} - {element.title}"
                 item = QListWidgetItem(item_text)
                 item.setData(Qt.UserRole, element.id)
+
+                # Set tooltip with double-click hint
+                item.setToolTip(f"Task: {element.id}\nStatus: {element.status.value.replace('_', ' ').title()}\n\nDouble-click to run task\nRight-click for options")
+
+                # Color-code based on status
+                from PySide6.QtGui import QColor
+                status_color = self._get_status_color(element.status.value)
+                item.setForeground(QColor(status_color))
+
                 self.code_list.addItem(item)
 
             self.logger.info(f"Loaded {len(task_elements)} task elements")
@@ -876,7 +1514,7 @@ class EditorPane(QWidget):
                 return
 
             index = indexer.get_index()
-            element = index.get_element_by_id(element_id)
+            element = index.get_element(element_id)
 
             if not element:
                 self.logger.warning(f"Element not found: {element_id}")
@@ -1256,6 +1894,15 @@ class MainWindow(QMainWindow):
         # File menu
         file_menu = menubar.addMenu('&File')
 
+        # New Project action
+        new_project_action = QAction('&New Project...', self)
+        new_project_action.setShortcut('Ctrl+N')
+        new_project_action.setStatusTip('Create a new project from templates')
+        new_project_action.triggered.connect(self._new_project)
+        file_menu.addAction(new_project_action)
+
+        file_menu.addSeparator()
+
         # Open Workspace action
         open_action = QAction('&Open Workspace...', self)
         open_action.setShortcut('Ctrl+O')
@@ -1318,6 +1965,15 @@ class MainWindow(QMainWindow):
         # Tools menu
         tools_menu = menubar.addMenu('&Tools')
 
+        # Task Runner action
+        task_runner_action = QAction('&Task Runner...', self)
+        task_runner_action.setShortcut('Ctrl+R')
+        task_runner_action.setStatusTip('Run development tasks and commands')
+        task_runner_action.triggered.connect(self._show_task_runner_for_current)
+        tools_menu.addAction(task_runner_action)
+
+        tools_menu.addSeparator()
+
         # Settings action
         settings_action = QAction('&Settings...', self)
         settings_action.setShortcut('Ctrl+,')  # Common settings shortcut
@@ -1346,6 +2002,9 @@ class MainWindow(QMainWindow):
         """Connect UI signals and slots."""
         # Connect navigation to editor
         self.navigation_pane.element_selected.connect(self.editor_pane.set_element)
+
+        # Connect task runner
+        self.navigation_pane.run_task_requested.connect(self._show_task_runner)
 
     def _load_workspace(self):
         """Load the specified workspace."""
@@ -1463,7 +2122,7 @@ class MainWindow(QMainWindow):
                 return
 
             index = indexer.get_index()
-            element = index.get_element_by_id(element_id)
+            element = index.get_element(element_id)
 
             if not element:
                 QMessageBox.information(
@@ -1530,6 +2189,225 @@ class MainWindow(QMainWindow):
         """Switch to the Test tab."""
         self.navigation_pane.tab_widget.setCurrentIndex(2)
         self.status_bar.showMessage("Switched to Test tab", 2000)
+
+    def _new_project(self):
+        """Show the new project dialog."""
+        # Determine workspace path
+        if self.workspace_path:
+            workspace_root = self.workspace_path.parent if self.workspace_path.name != "software-projects" else self.workspace_path
+        else:
+            # Use default workspace
+            workspace_root = Path.home() / "software-projects"
+
+        try:
+            # Check if workspace exists
+            if not workspace_root.exists():
+                reply = QMessageBox.question(
+                    self,
+                    "Workspace Not Found",
+                    f"Workspace directory '{workspace_root}' does not exist.\n\nWould you like to create it?",
+                    QMessageBox.Yes | QMessageBox.No,
+                    QMessageBox.Yes
+                )
+                if reply == QMessageBox.Yes:
+                    workspace_root.mkdir(parents=True, exist_ok=True)
+                    self.status_bar.showMessage(f"Created workspace directory: {workspace_root}", 3000)
+                else:
+                    return
+
+            # Check if templates directory exists
+            templates_dir = workspace_root / "templates"
+            if not templates_dir.exists():
+                QMessageBox.warning(
+                    self,
+                    "Templates Not Found",
+                    f"Templates directory not found: {templates_dir}\n\n"
+                    "Please ensure the templates directory exists with template files:\n"
+                    "• software-design.md\n"
+                    "• development-plan.md\n"
+                    "• test-plan.md"
+                )
+                return
+
+            # Create and show new project dialog
+            dialog = NewProjectDialog(self, workspace_root)
+            result = dialog.exec()
+
+            if result == QDialog.Accepted:
+                project_name = dialog.get_project_name()
+                self.status_bar.showMessage(f"Project '{project_name}' created successfully", 5000)
+                self.logger.info(f"New project created: {project_name}")
+
+                # Refresh workspace to show new project
+                if self.workspace_manager and workspace_root == self.workspace_path:
+                    self._refresh_workspace()
+                else:
+                    # Load the workspace if not already loaded
+                    self.workspace_path = workspace_root
+                    self._load_workspace()
+
+        except Exception as e:
+            error_msg = f"Error creating new project: {e}"
+            QMessageBox.critical(self, "New Project Error", error_msg)
+            self.logger.error(error_msg)
+
+    def _refresh_workspace(self):
+        """Refresh the current workspace."""
+        if self.workspace_manager:
+            try:
+                self.status_bar.showMessage("Refreshing workspace...", 1000)
+                success = self.workspace_manager.load(start_watching=False)
+
+                if success:
+                    # Refresh navigation content
+                    self.navigation_pane.refresh_content(self.workspace_manager)
+
+                    # Update editor pane workspace manager
+                    self.editor_pane.set_workspace_manager(self.workspace_manager)
+
+                    self.status_bar.showMessage("Workspace refreshed", 2000)
+                    self.logger.info("Workspace refreshed successfully")
+                else:
+                    error_msg = f"Failed to refresh workspace: {self.workspace_manager.last_error}"
+                    self.status_bar.showMessage(error_msg, 5000)
+                    self.logger.error(error_msg)
+
+            except Exception as e:
+                error_msg = f"Error refreshing workspace: {e}"
+                self.status_bar.showMessage(error_msg, 5000)
+                self.logger.error(error_msg)
+
+    def _show_task_runner(self, task_id: str):
+        """Show the task runner dialog for a specific task."""
+        try:
+            # Get the task element from workspace manager
+            if not self.workspace_manager or not self.workspace_manager.indexer:
+                QMessageBox.warning(
+                    self,
+                    "Workspace Not Ready",
+                    "No workspace loaded. Please open a workspace first."
+                )
+                return
+
+            indexer = self.workspace_manager.indexer
+            if indexer.get_state().name != "READY":
+                QMessageBox.warning(
+                    self,
+                    "Indexer Not Ready",
+                    "Workspace indexer is not ready. Please wait for indexing to complete."
+                )
+                return
+
+            # Get the task element
+            task_element = indexer.get_element(task_id)
+            if not task_element:
+                QMessageBox.warning(
+                    self,
+                    "Task Not Found",
+                    f"Task {task_id} not found in workspace."
+                )
+                return
+
+            # Verify it's actually a task
+            from doc_element import Kind
+            if task_element.kind != Kind.TASK:
+                QMessageBox.information(
+                    self,
+                    "Not a Task",
+                    f"Element {task_id} is not a task. Task runner only works with task elements."
+                )
+                return
+
+            # Determine workspace path for the task's project
+            workspace_path = self.workspace_path
+            if workspace_path and workspace_path.name != "software-projects":
+                # If we're in a specific project, use the workspace root
+                workspace_path = workspace_path.parent
+
+            # Create and show task runner dialog
+            dialog = TaskRunnerDialog(self, task_element, workspace_path)
+
+            # Connect status change signal to update navigation
+            dialog.task_status_changed.connect(self._on_task_status_changed)
+
+            self.status_bar.showMessage(f"Running task {task_id}...", 2000)
+            result = dialog.exec()
+
+            if result == QDialog.Accepted:
+                self.status_bar.showMessage("Task runner closed", 2000)
+
+        except Exception as e:
+            error_msg = f"Error opening task runner: {e}"
+            QMessageBox.critical(self, "Task Runner Error", error_msg)
+            self.logger.error(error_msg)
+
+    def _on_task_status_changed(self, task_id: str, new_status: str):
+        """Handle task status changes from task runner."""
+        self.logger.info(f"Task {task_id} status changed to: {new_status}")
+
+        # Update status bar
+        self.status_bar.showMessage(f"Task {task_id} marked as {new_status.replace('_', ' ')}", 3000)
+
+        # Refresh navigation to show updated status
+        # Note: In a full implementation, we'd update the display without full refresh
+        if self.workspace_manager:
+            try:
+                self.navigation_pane.refresh_content(self.workspace_manager)
+            except Exception as e:
+                self.logger.warning(f"Error refreshing navigation after status change: {e}")
+
+    def _show_task_runner_for_current(self):
+        """Show task runner for currently selected task, or prompt to select one."""
+        try:
+            # Check if we have a workspace loaded
+            if not self.workspace_manager or not self.workspace_manager.indexer:
+                QMessageBox.warning(
+                    self,
+                    "No Workspace",
+                    "Please open a workspace first to access tasks."
+                )
+                return
+
+            # Get all available tasks
+            from doc_element import Kind
+            indexer = self.workspace_manager.indexer
+            task_elements = indexer.get_elements_by_kind(Kind.TASK)
+
+            if not task_elements:
+                QMessageBox.information(
+                    self,
+                    "No Tasks Found",
+                    "No tasks found in the current workspace.\n\nCreate tasks in your development-plan.md files."
+                )
+                return
+
+            # If only one task, use it directly
+            if len(task_elements) == 1:
+                self._show_task_runner(task_elements[0].id)
+                return
+
+            # Multiple tasks - show selection dialog
+            from PySide6.QtWidgets import QInputDialog
+            task_names = [f"{t.id} - {t.title}" for t in task_elements]
+
+            selected, ok = QInputDialog.getItem(
+                self,
+                "Select Task",
+                "Choose a task to run:",
+                task_names,
+                0,
+                False
+            )
+
+            if ok and selected:
+                # Extract task ID from selection
+                task_id = selected.split(' - ')[0]
+                self._show_task_runner(task_id)
+
+        except Exception as e:
+            error_msg = f"Error accessing task runner: {e}"
+            QMessageBox.critical(self, "Task Runner Error", error_msg)
+            self.logger.error(error_msg)
 
     def _show_settings(self):
         """Show the settings dialog."""
@@ -1640,6 +2518,10 @@ def main():
         if len(sys.argv) > 1:
             workspace_path = sys.argv[1]
             logger.info(f"Using workspace path from command line: {workspace_path}")
+        else:
+            # Default to ~/software-projects
+            workspace_path = str(Path.home() / "software-projects")
+            logger.info(f"Using default workspace path: {workspace_path}")
 
         main_window = create_main_window(workspace_path)
 
