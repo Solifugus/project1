@@ -667,7 +667,12 @@ class EditorPane(QWidget):
 
         controls_layout.addWidget(self.save_button)
         controls_layout.addWidget(self.revert_button)
-        controls_layout.addSeparator()
+
+        # Add visual separator
+        separator = QLabel("|")
+        separator.setStyleSheet("color: gray; font-weight: bold; margin: 0 5px;")
+        controls_layout.addWidget(separator)
+
         controls_layout.addWidget(self.undo_button)
         controls_layout.addWidget(self.redo_button)
         controls_layout.addStretch()
